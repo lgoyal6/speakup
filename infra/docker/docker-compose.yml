@@ -4,7 +4,18 @@ services:
       context: ../../
       dockerfile: infra/docker/Dockerfile
     command: python -m speakup.api
-    environment: [SPEAKUP_DB=/data/speakup.db]
-    ports: ["8080:8080"]
+    environment:
+      SPEAKUP_DB: /data/speakup.db
+      SPEAKUP_HOST: 0.0.0.0
+      SPEAKUP_AUDIO_DIR: /data/audio
+      SPEAKUP_API_TOKEN_SHA256: ${SPEAKUP_API_TOKEN_SHA256:?set a SHA-256 bearer token digest}
+      SPEAKUP_USER_ID: ${SPEAKUP_USER_ID:?set the service user identity}
+      SPEAKUP_UPLOAD_SECRET: ${SPEAKUP_UPLOAD_SECRET:?set the upload signing secret}
+    ports: ["127.0.0.1:8080:8080"]
     volumes: [speakup-data:/data]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 volumes: {speakup-data: {}}
