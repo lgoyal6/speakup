@@ -1,8 +1,8 @@
-import json, os
+import hashlib, json, os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from .domain import RecordingState
-from .store import Store
+from .store import Store, now
 
 class Handler(BaseHTTPRequestHandler):
     store = Store(os.getenv("SPEAKUP_DB", "/tmp/speakup.db"))
@@ -37,6 +37,18 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/v1/recordings/") and p.endswith("/transcript"): self._json(200,self.store.get_transcript(u,p.split("/")[3]) or {}) ; return
             if p.startswith("/v1/recordings/"): self._json(200,self.store.get_recording(u,p.split("/")[3])); return
             self._json(404,{"error":"not found"})
+        except KeyError as e: self._json(404,{"error":str(e)})
+    def do_PUT(self):
+        try:
+            p=urlparse(self.path).path; u=self._user()
+            if not p.startswith("/v1/uploads/"): self._json(404,{"error":"not found"}); return
+            rid=p.split("/")[3]; self.store.get_recording(u,rid)
+            length=int(self.headers.get("Content-Length", "0")); data=self.rfile.read(length)
+            if len(data) > 50 * 1024 * 1024: self._json(413,{"error":"audio exceeds 50 MiB limit"}); return
+            digest=hashlib.sha256(data).hexdigest(); path=f"/tmp/speakup-{rid}.audio"
+            with open(path,"wb") as audio: audio.write(data)
+            self.store.db.execute("UPDATE recordings SET local_path=?,audio_sha256=?,updated_at=? WHERE id=? AND user_id=?",(path,digest,now(),rid,u)); self.store.db.commit()
+            self._json(200,{"recording_id":rid,"bytes":len(data),"sha256":digest})
         except KeyError as e: self._json(404,{"error":str(e)})
     def log_message(self,*args): pass
 
