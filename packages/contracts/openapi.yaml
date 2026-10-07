@@ -1,12 +1,244 @@
 openapi: 3.0.3
-info: {title: SpeakUp API, version: 0.1.0}
+info:
+  title: SpeakUp API
+  version: 0.1.0
+security:
+  - bearerAuth: []
 paths:
-  /v1/recordings: {post: {summary: Create offline recording metadata}}
-  /v1/recordings/{id}: {get: {summary: Read recording metadata}}
-  /v1/recordings/{id}/upload-url: {post: {summary: Issue short lived upload URL}}
-  /v1/recordings/{id}/complete: {post: {summary: Mark upload complete}}
-  /v1/recordings/{id}/process: {post: {summary: Enqueue transcription}}
-  /v1/recordings/{id}/transcript: {get: {summary: Read latest revision}, post: {summary: Save user revision}}
-  /v1/recordings/{id}/export: {post: {summary: Export reviewed transcript}}
-  /v1/recordings/{id}/delete: {post: {summary: Tombstone recording}}
-  /v1/sync: {post: {summary: Apply idempotent device operation}}
+  /healthz:
+    get:
+      security: []
+      summary: Local process health
+      responses:
+        '200': {description: Healthy process}
+  /metrics:
+    get:
+      security: []
+      summary: Aggregate queued job metrics for private monitoring
+      responses:
+        '200':
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema: {type: string}
+  /v1/recordings:
+    post:
+      summary: Create recording metadata
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    get:
+      summary: Read owned recording metadata
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}/transition:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    post:
+      summary: Set LOCAL_READY or UPLOAD_RETRY
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}/upload-url:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    post:
+      summary: Issue a user-scoped upload URL valid for 15 minutes
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    post:
+      summary: Complete an upload after bytes are durably stored
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}/process:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    post:
+      summary: Enqueue transcription without running a provider
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '202':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}/transcript:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    get:
+      summary: Read latest transcript revision
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+    post:
+      summary: Save a user transcript revision
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}/export:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    post:
+      summary: Export transcript as text or JSON
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/recordings/{id}/delete:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    post:
+      summary: Tombstone recording for retention purge
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/sync:
+    post:
+      summary: Apply a device operation in the authenticated user namespace
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid input or state}
+        '401': {description: Missing or invalid bearer token}
+        '404': {description: Recording not found for this user}
+  /v1/uploads/{id}:
+    parameters:
+      - $ref: '#/components/parameters/RecordingId'
+    put:
+      summary: Store audio bytes using a signed URL and the same user's bearer token
+      parameters:
+        - {in: query, name: exp, required: true, schema: {type: integer}, description: Unix expiration seconds}
+        - {in: query, name: sig, required: true, schema: {type: string}, description: HMAC SHA-256 signature}
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary, minLength: 1, maxLength: 52428800}
+      responses:
+        '200': {description: 'Bytes durably stored, returns recording_id, bytes, and sha256'}
+        '400': {description: Invalid framing or recording state}
+        '401': {description: Invalid bearer token}
+        '403': {description: Invalid or expired signed URL}
+        '409': {description: A prior upload used different bytes}
+        '413': {description: Audio size is outside the allowed range}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+  parameters:
+    RecordingId:
+      in: path
+      name: id
+      required: true
+      schema: {type: string, format: uuid}
