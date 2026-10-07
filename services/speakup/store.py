@@ -26,6 +26,8 @@ class Store:
         self.db.execute("INSERT INTO audit_events(user_id,recording_id,action,details,created_at) VALUES(?,?,?,?,?)", (user_id,recording_id,action,json.dumps(details or {}),now()))
 
     def create_recording(self, user_id: str, local_path: str | None = None, audio_sha256: str | None = None, recording_id: str | None = None) -> dict:
+        if recording_id is not None:
+            recording_id = str(uuid.UUID(recording_id))
         rid, ts = recording_id or str(uuid.uuid4()), now()
         with self._lock:
             self.db.execute("INSERT INTO recordings VALUES(?,?,?,?,?,?,?,NULL)", (rid,user_id,RecordingState.LOCAL_DRAFT,local_path,audio_sha256,ts,ts)); self._audit(user_id,rid,"recording_created"); self.db.commit()
@@ -96,6 +98,10 @@ class Store:
         with self._lock:
             rows = self.db.execute("SELECT id FROM recordings WHERE state=? AND deleted_at < ?", (RecordingState.DELETED, cutoff)).fetchall()
             for row in rows:
+                recording = self.db.execute("SELECT local_path FROM recordings WHERE id=?", (row[0],)).fetchone()
+                for table in ("transcript_revisions", "exports", "jobs"):
+                    self.db.execute(f"DELETE FROM {table} WHERE recording_id=?", (row[0],))
+                if recording and recording[0]: Path(recording[0]).unlink(missing_ok=True)
                 self.db.execute("DELETE FROM recordings WHERE id=?", (row[0],))
             self.db.commit()
             return len(rows)
