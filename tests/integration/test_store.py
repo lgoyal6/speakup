@@ -20,4 +20,8 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(s.claim_job(job["id"])["status"], "RUNNING")
         self.assertEqual(s.claim_job(job["id"])["status"], "RUNNING")
         self.assertEqual(s.finish_job(job["id"], False, "timeout")["status"], "RETRYING")
+    def test_deleted_data_is_purgeable_after_retention(self):
+        s=Store(); rid=s.create_recording("u")["id"]; s.delete("u",rid)
+        s.db.execute("UPDATE recordings SET deleted_at='2000-01-01T00:00:00+00:00' WHERE id=?", (rid,)); s.db.commit()
+        self.assertEqual(s.purge_deleted(1), 1)
 if __name__ == '__main__': unittest.main()

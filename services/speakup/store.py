@@ -1,4 +1,5 @@
 import hashlib, json, sqlite3, threading, uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from .domain import RecordingState, validate_sync_operation
@@ -88,6 +89,16 @@ class Store:
         self.get_recording(user_id,rid)
         with self._lock:
             self.db.execute("UPDATE recordings SET state=?,deleted_at=?,updated_at=? WHERE id=? AND user_id=?",(RecordingState.DELETED,now(),now(),rid,user_id)); self._audit(user_id,rid,"deleted"); self.db.commit(); return self.get_recording(user_id,rid)
+
+    def purge_deleted(self, retention_seconds: int) -> int:
+        """Remove tombstoned data only after the configured retention window."""
+        cutoff = datetime.fromtimestamp(time.time() - retention_seconds, timezone.utc).isoformat()
+        with self._lock:
+            rows = self.db.execute("SELECT id FROM recordings WHERE state=? AND deleted_at < ?", (RecordingState.DELETED, cutoff)).fetchall()
+            for row in rows:
+                self.db.execute("DELETE FROM recordings WHERE id=?", (row[0],))
+            self.db.commit()
+            return len(rows)
 
     def apply_sync(self,operation: dict):
         validate_sync_operation(operation)
