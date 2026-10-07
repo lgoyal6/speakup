@@ -50,6 +50,23 @@ class Store:
             if row: return dict(row)
             jid=str(uuid.uuid4()); self.db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?)",(jid,rid,"QUEUED",0,None,now())); self.db.commit(); return {"id":jid,"status":"QUEUED"}
 
+    def claim_job(self, job_id: str):
+        """Atomically claim one queued or retryable job; safe after worker restart."""
+        with self._lock:
+            row = self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row or row["status"] not in {"QUEUED", "RETRYING"}:
+                return dict(row) if row else None
+            self.db.execute("UPDATE jobs SET status='RUNNING', attempts=attempts+1, updated_at=? WHERE id=?", (now(), job_id))
+            self.db.commit()
+            return dict(self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+
+    def finish_job(self, job_id: str, success: bool, error: str | None = None):
+        status = "SUCCEEDED" if success else "RETRYING"
+        with self._lock:
+            self.db.execute("UPDATE jobs SET status=?,last_error=?,updated_at=? WHERE id=?", (status, error, now(), job_id)); self.db.commit()
+            row = self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            return dict(row) if row else None
+
     def save_transcript(self,user_id,rid,text,source="provider",model_version="demo-1",input_sha256=None):
         self.get_recording(user_id,rid)
         output=hashlib.sha256(text.encode()).hexdigest()
@@ -77,4 +94,7 @@ class Store:
         with self._lock:
             old=self.db.execute("SELECT server_cursor FROM sync_ops WHERE idempotency_key=?",(operation["idempotency_key"],)).fetchone()
             if old: return {"applied":False,"duplicate":True,"server_cursor":old[0]}
+            latest=self.db.execute("SELECT MAX(local_operation_id) FROM sync_ops WHERE device_id=?",(operation["device_id"],)).fetchone()[0]
+            if latest is not None and operation["local_operation_id"] <= latest:
+                return {"applied":False,"duplicate":False,"conflict":"out_of_order","server_cursor":None}
             cursor=(self.db.execute("SELECT COALESCE(MAX(server_cursor),0)+1 FROM sync_ops").fetchone()[0]); self.db.execute("INSERT INTO sync_ops VALUES(?,?,?,?,?,?)",(operation["idempotency_key"],operation["device_id"],operation["local_operation_id"],operation["kind"],json.dumps(operation.get("payload",{})),cursor)); self.db.commit(); return {"applied":True,"duplicate":False,"server_cursor":cursor}

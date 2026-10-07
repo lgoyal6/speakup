@@ -30,6 +30,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             p=urlparse(self.path).path; u=self._user()
+            if p == "/metrics":
+                queued = self.store.db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('QUEUED','RETRYING','RUNNING')").fetchone()[0]
+                body = f"speakup_jobs_inflight {queued}\n"
+                raw = body.encode(); self.send_response(200); self.send_header("Content-Type", "text/plain; version=0.0.4"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw); return
             if p.startswith("/v1/recordings/") and p.endswith("/transcript"): self._json(200,self.store.get_transcript(u,p.split("/")[3]) or {}) ; return
             if p.startswith("/v1/recordings/"): self._json(200,self.store.get_recording(u,p.split("/")[3])); return
             self._json(404,{"error":"not found"})
