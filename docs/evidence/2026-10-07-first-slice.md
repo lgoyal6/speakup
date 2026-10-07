@@ -5,3 +5,4 @@
 - The local API can be started with `PYTHONPATH=services python3 -m speakup.api` and exercised with the curl flow in the README.
 - `/metrics` exposes the in-flight job gauge for a Prometheus scrape; alert rules live under `infra/monitoring/prometheus`.
 - `gradle --offline -p android tasks` passes. With `ANDROID_HOME=/Users/lakshgoyal/Library/Android/sdk`, `gradle -p android assembleDebug` passes and produces the debug APK. Java and Kotlin targets are pinned to JVM 17 for reproducibility.
+- `docker compose -f infra/docker/docker-compose.yml config` passes after pinning the repository build context and nested Dockerfile path. GitHub Actions CI covers backend checks and Android assembly.

@@ -1,6 +1,8 @@
 services:
   api:
-    build: ../../
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile
     command: python -m speakup.api
     environment: [SPEAKUP_DB=/data/speakup.db]
     ports: ["8080:8080"]
