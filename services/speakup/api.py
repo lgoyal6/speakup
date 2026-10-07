@@ -17,7 +17,11 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/v1/recordings/"):
                 rid=p.split("/")[3]
                 if p.endswith("/transition"): self._json(200,self.store.transition(u,rid,RecordingState(b["state"]))); return
-                if p.endswith("/upload-url"): self._json(200,{"url":f"/v1/uploads/{rid}","expires_in":900,"method":"PUT"}); return
+                if p.endswith("/upload-url"):
+                    state = RecordingState(self.store.get_recording(u, rid)["state"])
+                    if state == RecordingState.LOCAL_DRAFT: self.store.transition(u, rid, RecordingState.LOCAL_READY)
+                    if state in {RecordingState.LOCAL_DRAFT, RecordingState.LOCAL_READY}: self.store.transition(u, rid, RecordingState.UPLOADING)
+                    self._json(200,{"url":f"/v1/uploads/{rid}","expires_in":900,"method":"PUT"}); return
                 if p.endswith("/complete"): self._json(200,self.store.transition(u,rid,RecordingState.UPLOADED)); return
                 if p.endswith("/process"): self._json(202,self.store.enqueue_job(u,rid)); return
                 if p.endswith("/transcript"): self._json(201,self.store.save_transcript(u,rid,b["text"],"user_edit",None)); return
