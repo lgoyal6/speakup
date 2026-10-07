@@ -4,4 +4,4 @@
 - `python -m compileall services tests` checks all Python modules compile.
 - The local API can be started with `PYTHONPATH=services python3 -m speakup.api` and exercised with the curl flow in the README.
 - `/metrics` exposes the in-flight job gauge for a Prometheus scrape; alert rules live under `infra/monitoring/prometheus`.
-- `gradle --offline -p android tasks` passes. `assembleDebug` is unverified because this host has no Android SDK configured (`sdk.dir`/`ANDROID_HOME` missing).
+- `gradle --offline -p android tasks` passes. With `ANDROID_HOME=/Users/lakshgoyal/Library/Android/sdk`, `gradle -p android assembleDebug` passes and produces the debug APK. Java and Kotlin targets are pinned to JVM 17 for reproducibility.
