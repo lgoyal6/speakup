@@ -1,0 +1,9 @@
+groups:
+- name: speakup
+  rules:
+  - alert: SpeakUpQueueAge
+    expr: speakup_queue_oldest_seconds > 900
+    for: 10m
+  - alert: SpeakUpUploadFailures
+    expr: rate(speakup_upload_retries_total[10m]) > 1
+    for: 10m

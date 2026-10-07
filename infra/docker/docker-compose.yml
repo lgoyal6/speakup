@@ -1,0 +1,8 @@
+services:
+  api:
+    build: ../../
+    command: python -m speakup.api
+    environment: [SPEAKUP_DB=/data/speakup.db]
+    ports: ["8080:8080"]
+    volumes: [speakup-data:/data]
+volumes: {speakup-data: {}}
