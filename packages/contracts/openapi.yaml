@@ -1,0 +1,12 @@
+openapi: 3.0.3
+info: {title: SpeakUp API, version: 0.1.0}
+paths:
+  /v1/recordings: {post: {summary: Create offline recording metadata}}
+  /v1/recordings/{id}: {get: {summary: Read recording metadata}}
+  /v1/recordings/{id}/upload-url: {post: {summary: Issue short lived upload URL}}
+  /v1/recordings/{id}/complete: {post: {summary: Mark upload complete}}
+  /v1/recordings/{id}/process: {post: {summary: Enqueue transcription}}
+  /v1/recordings/{id}/transcript: {get: {summary: Read latest revision}, post: {summary: Save user revision}}
+  /v1/recordings/{id}/export: {post: {summary: Export reviewed transcript}}
+  /v1/recordings/{id}/delete: {post: {summary: Tombstone recording}}
+  /v1/sync: {post: {summary: Apply idempotent device operation}}
