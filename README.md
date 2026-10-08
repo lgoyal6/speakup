@@ -29,7 +29,7 @@ curl -s -X POST "$base/recordings/$id/transcript" -H "$auth" -H 'content-type: a
 curl -s -X POST "$base/recordings/$id/export" -H "$auth" -H 'content-type: application/json' -d '{"format":"txt"}'
 ```
 
-The included processor turns UTF-8 fixture bytes into deterministic text. Bearer authentication, signed uploads, and SQLite plus local audio persistence are implemented. Real speech recognition, managed blob storage, production identity management, and Android device validation remain deployment work and are explicitly documented as adapter boundaries.
+The worker now has an explicit speech-provider boundary. Set `SPEAKUP_SPEECH_ENDPOINT`, `SPEAKUP_SPEECH_TOKEN`, and optionally `SPEAKUP_SPEECH_MODEL` for a Whisper-compatible provider. Provider failures leave the job retryable and never turn bytes into a fake transcript. The fixture provider is available only with `SPEAKUP_ALLOW_FIXTURE_PROVIDER=1` for offline tests. Bearer authentication, signed uploads, SQLite plus local audio persistence, and the Android MediaRecorder path are implemented. Managed blob storage, production identity management, and physical-device validation remain deployment work.
 
 ## Deployment security checks
 
