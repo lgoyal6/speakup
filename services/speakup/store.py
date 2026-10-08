@@ -63,6 +63,20 @@ class Store:
             self.db.commit()
             return dict(self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
+    def claim_next_job(self):
+        with self._lock:
+            row = self.db.execute("SELECT id FROM jobs WHERE status IN ('QUEUED','RETRYING') ORDER BY updated_at,id LIMIT 1").fetchone()
+            return self.claim_job(row[0]) if row else None
+
+    def get_job(self, job_id):
+        row = self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+    def recording_for_job(self, job_id):
+        row = self.db.execute("SELECT r.* FROM recordings r JOIN jobs j ON j.recording_id=r.id WHERE j.id=?", (job_id,)).fetchone()
+        if not row: raise KeyError("recording not found")
+        return dict(row)
+
     def finish_job(self, job_id: str, success: bool, error: str | None = None):
         status = "SUCCEEDED" if success else "RETRYING"
         with self._lock:
