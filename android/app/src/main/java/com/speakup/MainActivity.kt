@@ -16,12 +16,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.speakup.data.RecordingDatabase
+import com.speakup.sync.UploadWorker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /** UI state is ephemeral; Room/WorkManager own the durable recording and sync state. */
 class MainActivity : ComponentActivity() {
     private lateinit var recorder: AudioRecorder
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); recorder = AudioRecorder(this)
+        // A row that was LOCAL_DRAFT when the process died is retained and made resumable.
+        val database = RecordingDatabase.open(this)
+        runBlocking(Dispatchers.IO) {
+            database.recordings().interrupted().forEach { database.recordings().interrupted(it.id, "recording interrupted; review before upload", System.currentTimeMillis()) }
+        }
+        database.close()
         setContent { SpeakUpScreen(onStart = { recorder.start() }, onStop = { recorder.stop() }) }
     }
     override fun onDestroy() { recorder.release(); super.onDestroy() }
