@@ -20,6 +20,10 @@ abstract class RecordingDao {
     open suspend fun nextOperation(): Long { seedClock(SyncClock()); incrementClock(); return clock() }
     @Query("UPDATE recordings SET state=:state, error=:error, updatedAtEpochMs=:time WHERE id=:id AND localOperationId=:operation AND deleted=0")
     abstract suspend fun state(id: String, operation: Long, state: String, error: String?, time: Long): Int
+    @Query("UPDATE recordings SET state='INTERRUPTED',error=:error,updatedAtEpochMs=:time WHERE id=:id AND deleted=0")
+    abstract suspend fun interrupted(id: String, error: String?, time: Long): Int
+    @Query("UPDATE recordings SET state='LOCAL_READY',error=NULL,updatedAtEpochMs=:time WHERE id=:id AND state='LOCAL_DRAFT' AND deleted=0")
+    abstract suspend fun ready(id: String, time: Long): Int
     @Query("UPDATE recordings SET transcript=:text,pendingEdit=:text,localOperationId=:operation,state='EDITED',error=NULL,updatedAtEpochMs=:time WHERE id=:id AND deleted=0")
     abstract suspend fun edit(id: String, text: String, operation: Long, time: Long)
     @Query("UPDATE recordings SET deleted=1,state='DELETE_PENDING',rawTranscript=NULL,transcript=NULL,pendingEdit=NULL,localOperationId=:operation,updatedAtEpochMs=:time WHERE id=:id")
