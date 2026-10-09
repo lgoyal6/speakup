@@ -201,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
             audio_dir = Path(os.getenv("SPEAKUP_AUDIO_DIR", str(Path(self.store.path).parent / "audio")))
             audio_dir.mkdir(parents=True, exist_ok=True)
             path = audio_dir / (rid + ".audio")
-            with self.store._lock:
+            with self.store._transaction():
                 current = self.store.get_recording(u, rid)
                 if current["state"] != RecordingState.UPLOADING:
                     raise ValueError("recording is not uploading")
@@ -218,7 +218,6 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     temporary.unlink(missing_ok=True)
                 self.store.db.execute("UPDATE recordings SET local_path=?,audio_sha256=?,updated_at=? WHERE id=? AND user_id=?", (str(path), digest, now(), rid, u))
-                self.store.db.commit()
             self._json(200, {"recording_id": rid, "bytes": len(data), "sha256": digest})
         except PermissionError as e:
             self._json(401, {"error": str(e)})

@@ -25,14 +25,16 @@ upload=$(curl -s -X POST "$base/recordings/$id/upload-url" -H "$auth" | python -
 printf 'sample fixture audio' | curl -s -X PUT "http://127.0.0.1:8080$upload" -H "$auth" --data-binary @-
 curl -s -X POST "$base/recordings/$id/complete" -H "$auth"
 curl -s -X POST "$base/recordings/$id/process" -H "$auth"
+# Start the worker with SPEAKUP_ALLOW_FIXTURE_PROVIDER=1 only for this fixture demo.
+# Wait for GET /recordings/$id/transcript to return a transcript, then edit it.
 curl -s -X POST "$base/recordings/$id/transcript" -H "$auth" -H 'content-type: application/json' -d '{"text":"reviewed transcript"}'
 curl -s -X POST "$base/recordings/$id/export" -H "$auth" -H 'content-type: application/json' -d '{"format":"txt"}'
 ```
 
-The worker now has an explicit speech-provider boundary. Set `SPEAKUP_SPEECH_ENDPOINT`, `SPEAKUP_SPEECH_TOKEN`, and optionally `SPEAKUP_SPEECH_MODEL` for a Whisper-compatible provider. Provider failures leave the job retryable and never turn bytes into a fake transcript. The fixture provider is available only with `SPEAKUP_ALLOW_FIXTURE_PROVIDER=1` for offline tests. Bearer authentication, signed uploads, SQLite plus local audio persistence, and the Android MediaRecorder path are implemented. Managed blob storage, production identity management, and physical-device validation remain deployment work.
+The worker has an explicit speech-provider boundary and an expiring database lease. Set `SPEAKUP_SPEECH_ENDPOINT`, `SPEAKUP_SPEECH_TOKEN`, and optionally `SPEAKUP_SPEECH_MODEL` for an OpenAI-compatible multipart `/audio/transcriptions` endpoint. The adapter accepts M4A audio up to 25 MiB. Transient provider failures use delayed retries with a three-attempt budget; permanent failures are terminal and never turn bytes into a fake transcript. The fixture provider is available only with `SPEAKUP_ALLOW_FIXTURE_PROVIDER=1` for offline tests. Bearer authentication, signed uploads, SQLite plus local audio persistence, fenced worker publication, edit preservation, and the Android MediaRecorder path are implemented. Managed blob storage, production identity management, and physical-device validation remain deployment work.
 
 ## Deployment security checks
 
 `python3 scripts/verify_container.py` builds the container, checks unauthenticated rejection, uploads through a signed URL, restarts the service, and verifies both audio bytes and metadata persist on the mounted volume. It removes its container, volume, and image on exit. The image runs with a 256 MiB memory limit during this gate.
 
-For more than one local account, configure `SPEAKUP_API_TOKENS` as a JSON map of SHA-256 token digests to user IDs. Tokens select the user; `X-User-Id` has no effect. The reference Compose deployment uses one configured account and binds its host port to loopback. Put HTTPS and an identity provider in front of a public deployment. `/process` queues a job but does not run a background transcription service.
+For more than one local account, configure `SPEAKUP_API_TOKENS` as a JSON map of SHA-256 token digests to user IDs. Tokens select the user; `X-User-Id` has no effect. The reference Compose deployment uses one configured account and binds its host port to loopback. Put HTTPS and an identity provider in front of a public deployment. `/process` queues a job. Run `PYTHONPATH=services SPEAKUP_DB=/tmp/speakup.db python -m speakup.processor` in a separate process with the speech-provider settings. It continuously polls, recovers expired leases, delays retries, and stops on SIGTERM/SIGINT. Android Room persistence, background synchronization, process-death recovery, and live provider validation remain incomplete.

@@ -63,7 +63,17 @@ try:
     assert status == 200 and persisted["state"] == "UPLOADED"
     assert persisted["audio_sha256"] == hashlib.sha256(b"container audio").hexdigest()
     assert docker("exec", name, "python", "-c", "from pathlib import Path; assert Path(" + repr(persisted["local_path"]) + ").read_bytes() == b'container audio'") == ""
-    print("Container verified: authentication, signed upload, restart persistence")
+    assert request(port, "POST", f"/v1/recordings/{rid}/process", {})[0] == 202
+    docker("exec", name, "python", "-c", "from speakup.store import Store; from speakup.processor import process_next; from speakup.provider import FixtureProvider; s=Store('/data/state.db'); assert process_next(s,FixtureProvider())['status']=='SUCCEEDED'; s.db.close()")
+    docker("restart", name)
+    port = int(docker("port", name, "8080/tcp").rsplit(":", 1)[1])
+    wait(port)
+    assert request(port, "GET", f"/v1/recordings/{rid}/transcript")[1]["text"] == "container audio"
+    assert request(port, "POST", f"/v1/recordings/{rid}/transcript", {"text": "reviewed audio"})[0] == 201
+    assert request(port, "POST", f"/v1/recordings/{rid}/export", {})[1]["content"] == "reviewed audio"
+    assert request(port, "POST", f"/v1/recordings/{rid}/delete", {})[0] == 200
+    assert request(port, "GET", f"/v1/recordings/{rid}/transcript")[0] == 404
+    print("Container verified: authenticated upload, worker publication, restart, edit, export and deletion")
 except Exception:
     subprocess.run(["docker", "logs", name], check=False)
     raise
