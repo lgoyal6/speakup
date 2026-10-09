@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 from speakup.api import Handler, signed_upload_path
 from speakup.store import Store
+from speakup.processor import process_next
+from speakup.provider import FixtureProvider
 
 
 class HttpSecurityTests(unittest.TestCase):
@@ -107,7 +109,9 @@ class HttpSecurityTests(unittest.TestCase):
         record = self.request("GET", f"/v1/recordings/{rid}")[1]
         self.assertEqual(Path(record["local_path"]).read_bytes(), b"persistent audio")
         self.assertEqual(self.request("POST", f"/v1/recordings/{rid}/complete", {})[0], 200)
-        self.request("POST", f"/v1/recordings/{rid}/transcript", {"text": "reviewed"})
+        self.assertEqual(self.request("POST", f"/v1/recordings/{rid}/process", {})[0], 202)
+        self.assertEqual(process_next(self.store, FixtureProvider())["status"], "SUCCEEDED")
+        self.assertEqual(self.request("POST", f"/v1/recordings/{rid}/transcript", {"text": "reviewed"})[0], 201)
         self.request("POST", f"/v1/recordings/{rid}/export", {})
         self.request("POST", f"/v1/recordings/{rid}/process", {})
         self.request("POST", f"/v1/recordings/{rid}/delete", {})
