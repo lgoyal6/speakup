@@ -1,3 +1,7 @@
+"""Serve authenticated recording, upload and transcript requests.
+Uses Store for state changes and ResumableUploads for durable byte offsets.
+Signed upload paths remain bound to the recording, user and expiry.
+"""
 import hashlib
 import hmac
 import json
@@ -8,8 +12,14 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import errno
+
 from .domain import RecordingState
-from .store import Store, now
+from .store import StaleRevision, Store, now
+from .uploads import DigestMismatch, OffsetMismatch, ResumableUploads, StorageFull, parse_content_range
+
+_AFTER_UPLOAD = {RecordingState.UPLOADED, RecordingState.PROCESSING, RecordingState.TRANSCRIBED, RecordingState.EDITED,
+                 RecordingState.EXPORTED, RecordingState.FAILED, RecordingState.RETRYING}
 
 
 def authenticate(authorization: str, expected_digest: str) -> bool:
@@ -46,6 +56,9 @@ def verify_upload_signature(recording_id: str, user_id: str, expires: int, signa
 class Handler(BaseHTTPRequestHandler):
     store: Store  # Bound by the process entrypoint or an isolated test server.
     max_body = 64 * 1024
+
+    def _uploads(self):
+        return ResumableUploads(self.store, Path(os.getenv("SPEAKUP_AUDIO_DIR", str(Path(self.store.path).parent / "audio"))))
 
     def _json(self, status, body):
         raw = json.dumps(body).encode()
@@ -87,7 +100,7 @@ class Handler(BaseHTTPRequestHandler):
             u = self._user()
             b = self._body()
             if p == "/v1/recordings":
-                self._json(201, self.store.create_recording(u, recording_id=b.get("id")))
+                self._json(201, self.store.create_recording(u, recording_id=b.get("id"), expected_size=b.get("size"), expected_sha256=b.get("sha256")))
                 return
             if p.startswith("/v1/recordings/"):
                 rid = p.split("/")[3]
@@ -98,7 +111,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(200, self.store.transition(u, rid, target))
                     return
                 if p.endswith("/upload-url"):
-                    state = RecordingState(self.store.get_recording(u, rid)["state"])
+                    recording = self.store.get_recording(u, rid)
+                    state = RecordingState(recording["state"])
+                    if state in _AFTER_UPLOAD or (state == RecordingState.UPLOADING and recording["audio_sha256"]):
+                        # A client that lost the acknowledgement learns the upload already finished.
+                        self._json(200, {"complete": True, "state": state, "offset": recording["expected_size"], "sha256": recording["audio_sha256"]})
+                        return
                     if state == RecordingState.LOCAL_DRAFT:
                         self.store.transition(u, rid, RecordingState.LOCAL_READY)
                     if state in {RecordingState.LOCAL_DRAFT, RecordingState.LOCAL_READY, RecordingState.UPLOAD_RETRY}:
@@ -106,18 +124,22 @@ class Handler(BaseHTTPRequestHandler):
                     if self.store.get_recording(u, rid)["state"] != RecordingState.UPLOADING:
                         raise ValueError("recording is not uploading")
                     expires = int(time.time()) + 900
-                    self._json(200, {"url": signed_upload_path(rid, u, expires), "expires_in": 900, "method": "PUT"})
+                    self._json(200, {"url": signed_upload_path(rid, u, expires), "expires_in": 900, "method": "PUT", "complete": False, "offset": self._uploads().offset(rid)})
                     return
                 if p.endswith("/complete"):
                     recording = self.store.get_recording(u, rid)
                     if not recording["audio_sha256"] or not recording["local_path"]: raise ValueError("upload bytes before completing")
+                    if recording["state"] in _AFTER_UPLOAD:
+                        self._json(200, recording)  # Duplicate completion is a no-op.
+                        return
                     self._json(200, self.store.transition(u, rid, RecordingState.UPLOADED))
                     return
                 if p.endswith("/process"):
                     self._json(202, self.store.enqueue_job(u, rid))
                     return
                 if p.endswith("/transcript"):
-                    self._json(201, self.store.save_transcript(u, rid, b["text"], "user_edit", None))
+                    key = b.get("idempotency_key", self.headers.get("Idempotency-Key"))
+                    self._json(201, self.store.save_transcript(u, rid, b["text"], "user_edit", None, base_revision=b.get("base_revision"), client_key=key))
                     return
                 if p.endswith("/export"):
                     self._json(201, self.store.export(u, rid, b.get("format", "txt")))
@@ -138,6 +160,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(401, {"error": str(e)})
         except KeyError:
             self._json(404, {"error": "recording not found"})
+        except StaleRevision as e:
+            self._json(409, {"error": str(e), "current_revision": e.current_revision})
         except ValueError as e:
             self._json(400, {"error": str(e)})
         except Exception:
@@ -197,6 +221,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             data = self.rfile.read(length)
             if len(data) != length: raise ValueError("incomplete audio upload")
+            content_range = self.headers.get("Content-Range")
+            if content_range is not None:
+                start, total = parse_content_range(content_range, length)
+                chunk = self._uploads().append(u, rid, start, total, data)
+                self._json(200, {"recording_id": rid, "offset": chunk.offset, "total": chunk.total, "complete": chunk.complete, "sha256": chunk.sha256})
+                return
             digest = hashlib.sha256(data).hexdigest()
             audio_dir = Path(os.getenv("SPEAKUP_AUDIO_DIR", str(Path(self.store.path).parent / "audio")))
             audio_dir.mkdir(parents=True, exist_ok=True)
@@ -223,9 +253,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(401, {"error": str(e)})
         except KeyError as e:
             self._json(404, {"error": str(e)})
-
+        except OffsetMismatch as e:
+            self._json(409, {"error": str(e), "offset": e.offset})
+        except DigestMismatch as e:
+            self._json(422, {"error": str(e), "offset": 0})
+        except StorageFull as e:
+            self._json(507, {"error": "insufficient storage", "offset": e.offset})
         except ValueError as e:
             self._json(400, {"error": str(e)})
+        except OSError as e:
+            self._json(507 if e.errno in (errno.ENOSPC, errno.EDQUOT) else 500, {"error": "insufficient storage" if e.errno in (errno.ENOSPC, errno.EDQUOT) else "internal error"})
         except Exception:
             self._json(500, {"error": "internal error"})
 
