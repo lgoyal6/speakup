@@ -20,8 +20,10 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val recordingId = inputData.getString("recording_id") ?: return@withContext Result.failure()
         val operationKey = inputData.getString("idempotency_key") ?: return@withContext Result.failure()
         val database = RecordingDatabase.open(applicationContext)
+        var localOperationId: Long? = null
         try {
             val record = database.recordings().find(recordingId) ?: return@withContext Result.failure()
+            localOperationId = record.localOperationId
             val connection = Credentials(applicationContext).load() ?: return@withContext Result.retry()
             val api = ApiClient(connection)
             suspend fun stillCurrent(): Boolean {
@@ -104,15 +106,36 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             }
             return@withContext Result.success()
         } catch (failure: ApiFailure) {
-            if (failure.status in setOf(401, 403, 408, 429) || failure.status >= 500) Result.retry() else Result.failure()
+            if (failure.status == 401) {
+                localOperationId?.let { operation ->
+                    database.recordings().authenticationRequired(
+                        recordingId,
+                        operation,
+                        "Authentication required. Save a valid API connection to resume sync.",
+                        System.currentTimeMillis(),
+                    )
+                }
+                Result.failure()
+            } else if (failure.status in setOf(408, 429) || failure.status >= 500) {
+                Result.retry()
+            } else {
+                Result.failure()
+            }
         } catch (_: IOException) {
             Result.retry()
         } finally { database.close() }
     }
 
     companion object {
+        internal fun buildRequest(recordingId: String, operationKey: String): OneTimeWorkRequest =
+            OneTimeWorkRequestBuilder<UploadWorker>()
+                .setInputData(workDataOf("recording_id" to recordingId, "idempotency_key" to operationKey))
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, java.time.Duration.ofSeconds(10))
+                .build()
+
         fun request(context: Context, recordingId: String, operationKey: String = UUID.randomUUID().toString()): UUID {
-            val request = OneTimeWorkRequestBuilder<UploadWorker>().setInputData(workDataOf("recording_id" to recordingId, "idempotency_key" to operationKey)).setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL, java.time.Duration.ofSeconds(10)).build()
+            val request = buildRequest(recordingId, operationKey)
             WorkManager.getInstance(context).enqueueUniqueWork("upload-$recordingId", ExistingWorkPolicy.REPLACE, request)
             return request.id
         }
