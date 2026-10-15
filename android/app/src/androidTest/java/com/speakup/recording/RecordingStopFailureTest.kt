@@ -33,12 +33,19 @@ class RecordingStopFailureTest {
         val configurationFailure = IllegalStateException("recorder configuration failed")
         var recorderReleased = false
         val actualConfigurationFailure = try {
-            AudioRecorder(context) { recorderContext ->
-                object : MediaRecorder(recorderContext) {
+            AudioRecorder(context) {
+                object : MediaRecorder() {
+                    override fun setAudioSource(audioSource: Int) = Unit
+                    override fun setOutputFormat(outputFormat: Int) = Unit
+                    override fun setAudioEncoder(audioEncoder: Int) = Unit
+
                     override fun setOutputFile(file: File) {
                         file.writeBytes(byteArrayOf(1, 2, 3))
                         throw configurationFailure
                     }
+
+                    override fun prepare() = Unit
+                    override fun start() = Unit
 
                     override fun release() {
                         recorderReleased = true

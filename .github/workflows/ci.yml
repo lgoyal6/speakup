@@ -27,4 +27,4 @@ jobs:
         with: {gradle-version: '8.9'}
       - run: yes | sdkmanager --licenses >/dev/null || true
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - run: gradle -p android assembleDebug lintDebug --no-daemon --max-workers=1 -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m" -Pkotlin.compiler.execution.strategy=in-process
+      - run: gradle -p android assembleDebug lintDebug testDebugUnitTest assembleDebugAndroidTest --no-daemon --max-workers=1 -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m" -Pkotlin.compiler.execution.strategy=in-process
