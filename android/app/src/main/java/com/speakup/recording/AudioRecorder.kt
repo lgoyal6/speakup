@@ -4,6 +4,7 @@
 package com.speakup.recording
 
 import android.content.Context
+import android.os.Build
 import android.media.MediaRecorder
 import com.speakup.data.RecordingDatabase
 import com.speakup.data.RecordingEntity
@@ -29,7 +30,7 @@ class AudioRecorder(private val context: Context) {
                 next
             }
         } finally { database.close() }
-        val instance = MediaRecorder(context).apply { setAudioSource(MediaRecorder.AudioSource.MIC); setOutputFormat(MediaRecorder.OutputFormat.MPEG_4); setAudioEncoder(MediaRecorder.AudioEncoder.AAC); setOutputFile(file) }
+        val instance = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()).apply { setAudioSource(MediaRecorder.AudioSource.MIC); setOutputFormat(MediaRecorder.OutputFormat.MPEG_4); setAudioEncoder(MediaRecorder.AudioEncoder.AAC); setOutputFile(file) }
         try { instance.prepare(); instance.start() } catch (error: Exception) {
             instance.release(); file.delete()
             val cleanup = RecordingDatabase.open(context)
