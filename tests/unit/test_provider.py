@@ -1,3 +1,7 @@
+"""Check the speech HTTP adapter against an owned loopback server.
+The server captures requests and injects transport or response failures.
+Incomplete responses must retry without publishing partial transcripts.
+"""
 import hashlib
 import json
 import threading
@@ -13,16 +17,25 @@ class ProviderContractTests(unittest.TestCase):
         self.received = None
         self.delay = 0
         self.status = 200
+        self.incomplete = None
         self.body = json.dumps({"text": "spoken words", "provider": "spoof", "model": "spoof"}).encode()
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 owner.received = (self.headers, self.rfile.read(int(self.headers["Content-Length"])))
                 time.sleep(owner.delay)
                 self.send_response(owner.status)
-                self.send_header("Content-Length", str(len(owner.body)))
+                if owner.incomplete == "chunked":
+                    self.send_header("Transfer-Encoding", "chunked")
+                else:
+                    extra = 10 if owner.incomplete == "length" else 0
+                    self.send_header("Content-Length", str(len(owner.body) + extra))
                 self.end_headers()
                 try:
+                    if owner.incomplete == "chunked":
+                        self.wfile.write(f"{len(owner.body) + 10:x}\r\n".encode())
                     self.wfile.write(owner.body)
+                    if owner.incomplete:
+                        self.close_connection = True
                 except BrokenPipeError:
                     pass
             def log_message(self, *args):
@@ -79,3 +92,14 @@ class ProviderContractTests(unittest.TestCase):
         with self.assertRaises(ProviderError) as ctx:
             self.provider.transcribe(self.audio, self.digest)
         self.assertTrue(ctx.exception.retryable)
+
+    def test_incomplete_responses_are_retryable_and_redacted(self):
+        self.body = b'{"text":"partial transcript secret-token"}'
+        for framing in ("length", "chunked"):
+            with self.subTest(framing=framing):
+                self.incomplete = framing
+                with self.assertRaises(ProviderError) as ctx:
+                    self.provider.transcribe(self.audio, self.digest)
+                self.assertTrue(ctx.exception.retryable)
+                self.assertNotIn("secret", str(ctx.exception))
+                self.assertNotIn("partial transcript", str(ctx.exception))

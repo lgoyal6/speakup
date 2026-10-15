@@ -1,5 +1,10 @@
-"""Explicit transcription adapters. Fixture output requires caller opt-in."""
+"""Transcribe audio through the configured speech adapter.
+The processor uses ProviderError to decide whether a job can retry.
+Validate input and complete responses before returning a transcript.
+Fixture output requires explicit opt-in.
+"""
 import hashlib
+import http.client
 import json
 import os
 import secrets
@@ -22,13 +27,32 @@ class ProviderError(RuntimeError):
         self.retryable = retryable
 
 
+MAX_PROVIDER_AUDIO_BYTES = 25 * 1024 * 1024
+
+
 class SpeechProvider:
+    """Capability contract shared by every adapter (tests/unit/test_provider_conformance.py).
+
+    - Input is checked before any work: 1 byte to 25 MiB and matching SHA-256, else a
+      non-retryable ProviderError.
+    - Provenance (provider, model_version) comes from adapter configuration, never from
+      response fields.
+    - Failures are ProviderError with an explicit retry class and no secret or vendor body.
+    """
     def transcribe(self, audio: bytes, input_sha256: str) -> Transcript:
         raise NotImplementedError
+
+    @staticmethod
+    def check_input(audio: bytes, input_sha256: str) -> None:
+        if not audio or len(audio) > MAX_PROVIDER_AUDIO_BYTES:
+            raise ProviderError("provider audio must be 1 byte to 25 MiB", retryable=False)
+        if hashlib.sha256(audio).hexdigest() != input_sha256:
+            raise ProviderError("provider input hash mismatch", retryable=False)
 
 
 class FixtureProvider(SpeechProvider):
     def transcribe(self, audio: bytes, input_sha256: str) -> Transcript:
+        self.check_input(audio, input_sha256)
         text = " ".join(audio.decode("utf-8", errors="ignore").split()) or "[no speech detected]"
         return Transcript(text, "fixture", "fixture-1")
 
@@ -52,10 +76,7 @@ class WhisperHTTPProvider(SpeechProvider):
         self.endpoint, self.token, self.model, self.timeout = endpoint, token, model, timeout
 
     def transcribe(self, audio: bytes, input_sha256: str) -> Transcript:
-        if not audio or len(audio) > 25 * 1024 * 1024:
-            raise ProviderError("provider audio must be 1 byte to 25 MiB", retryable=False)
-        if hashlib.sha256(audio).hexdigest() != input_sha256:
-            raise ProviderError("provider input hash mismatch", retryable=False)
+        self.check_input(audio, input_sha256)
         boundary = "speakup-" + secrets.token_hex(16)
         prefix = (
             f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n{self.model}\r\n'
@@ -75,11 +96,14 @@ class WhisperHTTPProvider(SpeechProvider):
                 body = response.read((1 << 20) + 1)
                 if len(body) > (1 << 20):
                     raise ProviderError("speech response exceeds 1 MiB", retryable=False)
+                # A bounded read can return early without rejecting a short Content-Length.
+                if response.length not in (None, 0):
+                    raise ProviderError("speech provider response was incomplete")
         except urllib.error.HTTPError as error:
             # Never persist a vendor error body, URL or token in job failure records.
             error.close()
             raise ProviderError(f"speech provider HTTP {error.code}", retryable=error.code in {408, 429} or error.code >= 500) from None
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
             raise ProviderError("speech provider connection failed") from None
         try:
             result = json.loads(body)
