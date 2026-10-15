@@ -1,3 +1,6 @@
+// Define the Room rows for recordings and the local operation clock.
+// RecordingDatabase persists these fields for the UI and sync worker.
+// Keep pending edits separate from the last server transcript.
 package com.speakup.data
 
 import androidx.room.Entity
@@ -16,6 +19,7 @@ data class RecordingEntity(
     val pendingEdit: String? = null,
     val serverRevision: Int? = null,
     val error: String? = null,
+    val uploadOffset: Long = 0,
 )
 
 @Entity(tableName = "sync_clock")
