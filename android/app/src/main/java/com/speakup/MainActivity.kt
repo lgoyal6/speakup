@@ -70,8 +70,9 @@ fun SpeakUpScreen(database: RecordingDatabase? = null, onStart: () -> Unit = {},
             try {
                 Credentials(context).save(baseUrl, token)
                 Toast.makeText(context, "Connection saved", Toast.LENGTH_SHORT).show()
-                recordings.filter { it.state in setOf("LOCAL_READY", "UPLOADING", "UPLOAD_RETRY", "UPLOADED", "PROCESSING", "EDITED", "DELETE_PENDING") }
-                    .forEach { UploadWorker.request(context, it.id, "${it.id}:sync:${it.localOperationId}") }
+                scope.launch {
+                    database?.let { resumePendingSync(context, it) }
+                }
             } catch (error: Exception) { Toast.makeText(context, error.message ?: "Invalid connection", Toast.LENGTH_SHORT).show() }
         }) { Text("Save connection and resume sync") }
         if (permissionDenied) Text("Microphone permission is required to record.", color = MaterialTheme.colorScheme.error)
@@ -100,6 +101,7 @@ private fun RecordingRow(item: RecordingEntity, database: RecordingDatabase?, sc
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("${item.state} · ${item.id.take(8)}")
+            item.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (item.transcript != null || item.pendingEdit != null) {
                 OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Review transcript") }, modifier = Modifier.fillMaxWidth())
                 Button(enabled = item.serverRevision != null && text.isNotBlank(), onClick = {
@@ -121,6 +123,16 @@ private fun RecordingRow(item: RecordingEntity, database: RecordingDatabase?, sc
                     }
                 }) { Text("Delete") }
             }
+        }
+    }
+}
+
+internal suspend fun resumePendingSync(context: android.content.Context, database: RecordingDatabase) {
+    val resumableStates = setOf("LOCAL_READY", "UPLOADING", "UPLOAD_RETRY", "UPLOADED", "PROCESSING", "EDITED", "DELETE_PENDING")
+    database.recordings().resumableIds().forEach { id ->
+        val pending = database.recordings().find(id) ?: return@forEach
+        if (pending.state in resumableStates) {
+            UploadWorker.request(context, id, "${id}:sync:${pending.localOperationId}")
         }
     }
 }
