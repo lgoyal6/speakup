@@ -9,12 +9,18 @@ import android.media.MediaRecorder
 import com.speakup.data.RecordingDatabase
 import com.speakup.data.RecordingEntity
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import java.io.RandomAccessFile
 import com.speakup.sync.UploadWorker
 
 /** Creates app-private files and commits metadata only after a complete fsynced recording. */
-class AudioRecorder(private val context: Context) {
+class AudioRecorder internal constructor(
+    private val context: Context,
+    private val recorderFactory: (Context) -> MediaRecorder,
+) {
+    constructor(context: Context) : this(context, ::createMediaRecorder)
+
     private var recorder: MediaRecorder? = null
     private var output: File? = null
     private var recordingId: String? = null
@@ -30,14 +36,40 @@ class AudioRecorder(private val context: Context) {
                 next
             }
         } finally { database.close() }
-        val instance = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()).apply { setAudioSource(MediaRecorder.AudioSource.MIC); setOutputFormat(MediaRecorder.OutputFormat.MPEG_4); setAudioEncoder(MediaRecorder.AudioEncoder.AAC); setOutputFile(file) }
-        try { instance.prepare(); instance.start() } catch (error: Exception) {
-            instance.release(); file.delete()
-            val cleanup = RecordingDatabase.open(context)
-            kotlinx.coroutines.runBlocking { cleanup.recordings().discardFailedStart(id, operation) }
-            cleanup.close()
+        var created: MediaRecorder? = null
+        try {
+            val instance = recorderFactory(context)
+            created = instance
+            instance.setAudioSource(MediaRecorder.AudioSource.MIC)
+            instance.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            instance.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            instance.setOutputFile(file)
+            instance.prepare()
+            instance.start()
+        } catch (error: Exception) {
+            try { created?.release() } catch (cleanupError: Exception) { error.addSuppressed(cleanupError) }
+            try {
+                if (file.exists() && !file.delete()) throw IOException("failed recording file could not be removed")
+            } catch (cleanupError: Exception) {
+                error.addSuppressed(cleanupError)
+            }
+            var cleanup: RecordingDatabase? = null
+            try {
+                val failedStartDatabase = RecordingDatabase.open(context)
+                cleanup = failedStartDatabase
+                kotlinx.coroutines.runBlocking {
+                    check(failedStartDatabase.recordings().discardFailedStart(id, operation) == 1) {
+                        "failed recording draft could not be discarded"
+                    }
+                }
+            } catch (cleanupError: Exception) {
+                error.addSuppressed(cleanupError)
+            } finally {
+                try { cleanup?.close() } catch (cleanupError: Exception) { error.addSuppressed(cleanupError) }
+            }
             throw error
         }
+        val instance = checkNotNull(created)
         recordingId = id
         recorder = instance; output = file
         return file
@@ -89,6 +121,9 @@ class AudioRecorder(private val context: Context) {
         }
     }
 }
+
+private fun createMediaRecorder(context: Context): MediaRecorder =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
 
 internal inline fun <T> recordingStopWithCleanup(
     action: () -> T,
