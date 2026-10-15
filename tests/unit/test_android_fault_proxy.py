@@ -2,6 +2,7 @@
 The sync harness needs one injected failure and unchanged forwarded bodies.
 A barrier exposes competing fault claims without relying on thread timing."""
 import importlib.util
+import json
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -88,6 +89,56 @@ class AndroidFaultProxyTests(unittest.TestCase):
                 self.assertEqual((status, body), (201, b"forwarded:exact audio"))
                 self.assertEqual([v for k, v in headers if k.lower() == "content-type"], ["application/octet-stream"])
                 self.assertEqual(request(proxy, "GET", "/__fault_state", b"")[2], b"1")
+
+    def test_scoped_upload_fault_matches_signed_url_and_only_its_recording(self):
+        module, _ = load_proxy()
+        with running(Upstream) as upstream:
+            module.TARGET_PORT = upstream.server_port
+            module.legacy_enabled = False
+            with running(module.Handler) as proxy:
+                status, _, _ = request(proxy, "POST", "/__fault_config", json.dumps({
+                    "phase": "upload", "mode": "http_401", "recording_id": "recording-1",
+                    "path": "/v1/uploads/recording-1",
+                }).encode())
+                self.assertEqual(status, 200)
+                other = request(proxy, "PUT", "/v1/uploads/recording-2?exp=1&sig=other")
+                self.assertEqual((other[0], other[2]), (201, b"forwarded:recording bytes"))
+                first = request(proxy, "PUT", "/v1/uploads/recording-1?exp=1&sig=valid")
+                self.assertEqual(first[0], 401)
+                retry = request(proxy, "PUT", "/v1/uploads/recording-1?exp=1&sig=valid")
+                self.assertEqual((retry[0], retry[2]), (201, b"forwarded:recording bytes"))
+                state = json.loads(request(proxy, "GET", "/__matrix_state", b"")[2])
+                self.assertEqual(state["injected"], 1)
+                self.assertEqual(state["events"][0]["path"], "/v1/uploads/recording-1?exp=1&sig=valid")
+                clear_status, _, _ = request(proxy, "POST", "/__fault_config", b'{"clear_plan":true}')
+                self.assertEqual(clear_status, 200)
+                cleared_retry = request(proxy, "PUT", "/v1/uploads/recording-1?exp=1&sig=valid")
+                self.assertEqual((cleared_retry[0], cleared_retry[2]), (201, b"forwarded:recording bytes"))
+                self.assertEqual(json.loads(request(proxy, "GET", "/__matrix_state", b"")[2])["injected"], 1)
+
+    def test_create_ticket_and_complete_faults_ignore_other_recordings(self):
+        module, _ = load_proxy()
+        with running(Upstream) as upstream:
+            module.TARGET_PORT = upstream.server_port
+            module.legacy_enabled = False
+            with running(module.Handler) as proxy:
+                cases = [
+                    ("create", "/v1/recordings", b'{"id":"recording-1"}', b'{"id":"recording-2"}'),
+                    ("ticket", "/v1/recordings/recording-1/upload-url", b"{}", b"{}"),
+                    ("complete", "/v1/recordings/recording-1/complete", b"{}", b"{}"),
+                ]
+                for phase, target_path, target_body, other_body in cases:
+                    target_id = "recording-1"
+                    plan = {"phase": phase, "mode": "http_401", "recording_id": target_id}
+                    status, _, _ = request(proxy, "POST", "/__fault_config", json.dumps(plan).encode())
+                    self.assertEqual(status, 200)
+                    other_path = "/v1/recordings" if phase == "create" else target_path.replace(target_id, "recording-2")
+                    other = request(proxy, "POST", other_path, other_body)
+                    self.assertEqual(other[0], 201, f"{phase} fault must ignore unrelated recording traffic")
+                    target = request(proxy, "POST", target_path, target_body)
+                    self.assertEqual(target[0], 401, f"{phase} fault must remain armed for its recording")
+                state = json.loads(request(proxy, "GET", "/__matrix_state", b"")[2])
+                self.assertEqual(state["injected"], 3)
 
     def test_forwarded_response_has_exactly_one_correct_content_length(self):
         module, _ = load_proxy()
