@@ -1,0 +1,138 @@
+{
+  "mode": "saved synthetic native-component replay",
+  "fixture_bytes": 1024,
+  "code": [
+    {
+      "path": "services/speakup/domain.py",
+      "sha256": "8c2bbbea3c4c91392a5946225f48ed72b7de75924ab90aa3011d42e476ba4436"
+    },
+    {
+      "path": "services/speakup/uploads.py",
+      "sha256": "95b3ae2c542bd5337e2255f632d487a1c8b29c7c7b9ff979c2e10c9793eac33a"
+    },
+    {
+      "path": "services/speakup/store.py",
+      "sha256": "a2efd3f9798758dfeadf30d750e2664e7fe24691ca187844d9b7e52a064ba426"
+    }
+  ],
+  "scenarios": {
+    "resume": {
+      "steps": [
+        {
+          "event": "Synthetic upload created",
+          "result": {
+            "state": "UPLOADING",
+            "total": 1024
+          }
+        },
+        {
+          "event": "First chunk committed; client misses acknowledgement",
+          "result": {
+            "durable_offset": 512,
+            "complete": false
+          }
+        },
+        {
+          "event": "Repeated first chunk refused",
+          "result": {
+            "reason": "offset_mismatch",
+            "server_offset": 512
+          }
+        },
+        {
+          "event": "Resume from authoritative offset",
+          "result": {
+            "offset": 1024,
+            "complete": true,
+            "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+          }
+        }
+      ]
+    },
+    "final_ack": {
+      "steps": [
+        {
+          "event": "Synthetic upload created",
+          "result": {
+            "state": "UPLOADING",
+            "total": 1024
+          }
+        },
+        {
+          "event": "First chunk committed; client misses acknowledgement",
+          "result": {
+            "durable_offset": 512,
+            "complete": false
+          }
+        },
+        {
+          "event": "Resume from authoritative offset",
+          "result": {
+            "offset": 1024,
+            "complete": true,
+            "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+          }
+        },
+        {
+          "event": "Repeated final chunk acknowledged without appending",
+          "result": {
+            "offset": 1024,
+            "complete": true,
+            "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+          }
+        }
+      ]
+    },
+    "bad_digest": {
+      "steps": [
+        {
+          "event": "Synthetic upload created",
+          "result": {
+            "state": "UPLOADING",
+            "total": 1024
+          }
+        },
+        {
+          "event": "First chunk committed; client misses acknowledgement",
+          "result": {
+            "durable_offset": 512,
+            "complete": false
+          }
+        },
+        {
+          "event": "Digest mismatch; partial discarded",
+          "result": {
+            "offset": 0,
+            "recorded_digest": null
+          }
+        }
+      ]
+    },
+    "edit_conflict": {
+      "steps": [
+        {
+          "event": "Synthetic sample transcript saved",
+          "result": {
+            "revision": 1,
+            "text": "Sample note"
+          }
+        },
+        {
+          "event": "First editor saves revision 2",
+          "result": {
+            "revision": 2,
+            "text": "Reviewed sample note"
+          }
+        },
+        {
+          "event": "Stale edit refused; newer text preserved",
+          "result": {
+            "reason": "stale_revision",
+            "current_revision": 2,
+            "text": "Reviewed sample note"
+          }
+        }
+      ]
+    }
+  }
+}
