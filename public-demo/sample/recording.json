@@ -1,0 +1,13 @@
+{
+  "id": "61-70970-0012",
+  "reference": "YET HE WILL TEACH YOU A FEW TRICKS WHEN MORNING IS COME",
+  "hypothesis": " Yet he will teach you a few tricks when warning is come.\n",
+  "model": "whisper.cpp-tiny.en",
+  "audio_sha256": "cdecf106f064c3bded6d40bb92fd69029e893d517b664084f472d0e5987b2355",
+  "duration_s": 3.135,
+  "dataset": "LibriSpeech test-clean",
+  "license": "CC-BY-4.0",
+  "source": "https://www.openslr.org/12",
+  "revision": "71cacbfb7e2354c4226d01e70d77d5fca3d04ba1",
+  "transcript_mode": "Recorded whisper.cpp CPU result, not inference during this demo"
+}
