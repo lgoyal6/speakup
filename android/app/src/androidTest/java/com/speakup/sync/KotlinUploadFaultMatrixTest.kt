@@ -18,6 +18,19 @@ import java.util.UUID
 
 class KotlinUploadFaultMatrixTest {
     @Test
+    fun uploadResponseLostAfterCommitCompletesWithoutSecondFault() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val proxy = "http://10.0.2.2:18080"
+        val credentials = Credentials(context)
+        credentials.save(proxy, "h7-test-token")
+        val api = ApiClient(credentials.load()!!)
+        setLegacyFault(proxy, false)
+        val initial = matrixState(proxy).getInt("injected")
+        runScenario(api, proxy, 54, "upload" to "drop_response", "-focused")
+        assertEquals(initial + 1, matrixState(proxy).getInt("injected"))
+    }
+
+    @Test
     fun hundredSeededSingleFaultsRecoverOrStopForReauthentication() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val proxy = "http://10.0.2.2:18080"
@@ -55,9 +68,9 @@ class KotlinUploadFaultMatrixTest {
         }
     }
 
-    private fun runScenario(api: ApiClient, proxy: String, index: Int, fault: Pair<String, String>?) {
+    private fun runScenario(api: ApiClient, proxy: String, index: Int, fault: Pair<String, String>?, idSuffix: String = "") {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val recordingId = UUID.nameUUIDFromBytes("h7-kotlin-fault-$index".toByteArray()).toString()
+        val recordingId = UUID.nameUUIDFromBytes("h7-kotlin-fault-$index$idSuffix".toByteArray()).toString()
         val bytes = ByteArray(4096 + (index + 10_000) * 17).also { Random(20261015L + index).nextBytes(it) }
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         val file = File(context.cacheDir, "$recordingId.m4a").also { it.writeBytes(bytes) }
@@ -70,7 +83,8 @@ class KotlinUploadFaultMatrixTest {
             try {
                 return success()
             } catch (failure: Exception) {
-                assertTrue("scenario $index injected more than one failure", !injected)
+                assertTrue("scenario $index had another $phase failure after its planned fault: $failure " +
+                    "payload=${(failure as? ApiFailure)?.payload}", !injected)
                 assertExpectedFault(failure, fault?.second ?: "")
                 injected = true
                 if (fault?.second == "http_401") {
