@@ -9,6 +9,7 @@ import android.widget.Toast
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.speakup.recording.AudioRecorder
+import com.speakup.audio.PcmCaptureController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,36 +31,47 @@ import com.speakup.sync.UploadWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** UI state is ephemeral; Room/WorkManager own the durable recording and sync state. */
 class MainActivity : ComponentActivity() {
     private lateinit var recorder: AudioRecorder
     private lateinit var database: RecordingDatabase
+    private lateinit var pcmCapture: PcmCaptureController
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); recorder = AudioRecorder(this)
+        pcmCapture = PcmCaptureController(this)
         // A row that was LOCAL_DRAFT when the process died is retained and made resumable.
         database = RecordingDatabase.open(this)
         runBlocking(Dispatchers.IO) {
             database.recordings().interrupted().forEach { database.recordings().interrupted(it.id, "recording interrupted; review before upload", System.currentTimeMillis()) }
         }
-        setContent { SpeakUpScreen(database, onStart = { recorder.start() }, onStop = { recorder.stop() }) }
+        setContent { SpeakUpScreen(database, onStart = { recorder.start() }, onStop = { recorder.stop() }, pcmCapture = pcmCapture) }
     }
-    override fun onDestroy() { recorder.release(); database.close(); super.onDestroy() }
+    override fun onStop() { if (::pcmCapture.isInitialized) pcmCapture.interrupt(); super.onStop() }
+    override fun onDestroy() { recorder.release(); if (::pcmCapture.isInitialized) pcmCapture.close(); database.close(); super.onDestroy() }
 }
 
 @Composable
-fun SpeakUpScreen(database: RecordingDatabase? = null, onStart: () -> Unit = {}, onStop: () -> Unit = {}) {
+fun SpeakUpScreen(database: RecordingDatabase? = null, onStart: () -> Unit = {}, onStop: () -> Unit = {}, pcmCapture: PcmCaptureController? = null) {
     val context = LocalContext.current
     val savedConnection = remember { Credentials(context).load() }
     var baseUrl by remember { mutableStateOf(savedConnection?.baseUrl ?: "") }
     var token by remember { mutableStateOf(savedConnection?.token ?: "") }
     var recording by remember { mutableStateOf(false) }
     var permissionDenied by remember { mutableStateOf(false) }
+    var pcmPermissionDenied by remember { mutableStateOf(false) }
+    val pcmState = pcmCapture?.state?.collectAsState()?.value ?: "UNAVAILABLE"
+    val pcmTakes = pcmCapture?.takes?.collectAsState()?.value ?: emptyList()
     val scope = rememberCoroutineScope()
     val recordings = database?.recordings()?.history()?.collectAsState(initial = emptyList())?.value ?: emptyList()
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionDenied = !granted
         if (granted) try { onStart(); recording = true } catch (error: Exception) { Toast.makeText(context, error.message ?: "recording failed", Toast.LENGTH_SHORT).show() }
+    }
+    val pcmPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        pcmPermissionDenied = !granted
+        if (granted) pcmCapture?.start()
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("SpeakUp", style = MaterialTheme.typography.headlineMedium)
@@ -86,6 +98,31 @@ fun SpeakUpScreen(database: RecordingDatabase? = null, onStart: () -> Unit = {},
             } catch (error: Exception) { Toast.makeText(context, error.message ?: "recording failed", Toast.LENGTH_SHORT).show() }
         }) {
             Text(if (recording) "Stop recording" else "Start recording")
+        }
+        HorizontalDivider()
+        Text("Local PCM enhancement preview", style = MaterialTheme.typography.titleMedium)
+        Text("Captures 16 kHz mono PCM. The original is preserved, and a separate classical frame-gate derivative stays on this device. This preview is not a neural denoiser and does not auto-upload.")
+        Text("Status: $pcmState")
+        if (pcmPermissionDenied) Text("Microphone permission is required for the PCM preview.", color = MaterialTheme.colorScheme.error)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = pcmCapture != null && pcmState !in setOf("STARTING", "RECORDING", "FINALIZING"), onClick = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) pcmCapture?.start()
+                else pcmPermission.launch(Manifest.permission.RECORD_AUDIO)
+            }) { Text("Start PCM preview") }
+            Button(enabled = pcmState == "RECORDING", onClick = { pcmCapture?.stop() }) { Text("Stop preview") }
+        }
+        pcmTakes.forEach { take ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${take.status} · ${take.id.take(8)} · ${take.sampleCount / 16000.0}s")
+                    take.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(enabled = File(take.originalPath).isFile, onClick = { pcmCapture?.play(take.originalPath) }) { Text("Play original") }
+                        TextButton(enabled = File(take.enhancedPath).isFile, onClick = { pcmCapture?.play(take.enhancedPath) }) { Text("Play enhanced") }
+                        TextButton(onClick = { pcmCapture?.delete(take.id) }) { Text("Delete both") }
+                    }
+                }
+            }
         }
         Text("Offline history", style = MaterialTheme.typography.titleMedium)
         recordings.forEach { item ->

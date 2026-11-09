@@ -41,6 +41,8 @@ Every speech adapter implements the `SpeechProvider` contract in `services/speak
 
 ## Deployment security checks
 
+For a separate real-human, CPU-only diagnostic, see [the frozen LibriSpeech protocol](docs/human-speech.md). It uses published speech and the actual worker/provider path, with paired speaker uncertainty and source/audio hashes. It does not establish physical-device behavior.
+
 `python3 scripts/verify_container.py` builds the container, checks unauthenticated rejection, uploads through a signed URL, restarts the service, and verifies both audio bytes and metadata persist on the mounted volume. It removes its container, volume, and image on exit. The image runs with a 256 MiB memory limit during this gate.
 
 For more than one local account, configure `SPEAKUP_API_TOKENS` as a JSON map of SHA-256 token digests to user IDs. Tokens select the user; `X-User-Id` has no effect. The reference Compose deployment uses one configured account and binds its host port to loopback. Put HTTPS and an identity provider in front of a public deployment. `/process` queues a job. Run `PYTHONPATH=services SPEAKUP_DB=/tmp/speakup.db python -m speakup.processor` in a separate process with the speech-provider settings. It continuously polls, recovers expired leases, delays retries, and stops on SIGTERM/SIGINT. The debug build and connected API 35 emulator test cover the Room migration and WorkManager upload, edit and delete path against the local fixture service. Live provider quality, physical-device background restrictions and field use remain unverified.
